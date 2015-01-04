@@ -71,15 +71,14 @@ Example: Environment with Elasticsearch and Kibana
 
 	.../kibana/config/kibana.yml.tmpl (in image)
 		...
-		elasticsearch: "{{.ELASTICSEARCHCONTAINER_HTTP}}"
-		port: {{.KIBANA_PORT}}
+		elasticsearch: "{{.ELASTICSEARCHCONTAINER_URL}}"
+		port: {{join .KIBANA_PORT ","}}
 
 
 
+Notes:
 
-
-
-For more info on go templates see: http://golang.org/pkg/text/template/
+    * For more info on go templates see: http://golang.org/pkg/text/template/
 
 */
 
@@ -95,6 +94,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"syscall"
 	"text/template"
@@ -159,52 +159,117 @@ func getLogger(env DockerStarterEnvironment) *log.Logger {
 	return log.New(env.getStderr(), "docker-starter: ", 0)
 }
 
-func readExtendedVariables(env DockerStarterEnvironment) (result map[string]string) {
+func readExtendedVariables(env DockerStarterEnvironment) (result map[string][]string) {
 
 	logger := getLogger(env)
-	result = make(map[string]string)
+	result = make(map[string][]string)
 
-	// link environment variables should look like this
-	var re_linkkey = regexp.MustCompile(`^([^_]+)_.*_TCP$`)
-	var re_linkvalue = regexp.MustCompile(`^(.*)://(.*):(.*)$`)
-
-	// copy environment vars to result and extend link variables
+	// convert slice of strings from environment to resulting data structure
+	// here every key can have multiple value associated with it
+	// note: the template function "E"  expects thos values to be ordered, the most
+	// important one at the first position
 	for _, e := range env.getEnvVariables() {
-
-		// copy original variable to result
 		pair := strings.Split(e, "=")
-		key, value := pair[0], pair[1] // use "key", "value" for better readability
-		result[key] = value
-		// logger.Printf("key=%s, value=%s", key, value)
+		result[pair[0]] = append(result[pair[0]], pair[1])
+	}
+
+	// make sore we process the keys in a deterministic order
+	keys := []string{}
+	for k, _ := range result {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// now  iterate over every key value pair, search for link keys
+	// and add additional keys generated from the link values
+	for _, key := range keys {
 
 		// look for link variables
-		key_elements := re_linkkey.FindStringSubmatch(key)
-		if key_elements == nil {
+		app, _, appport := parseLinkkey(key)
+		if app == "" {
 			continue
 		}
 
-		logger.Printf("found link variable %s=%s", key, value)
-
-		value_elements := re_linkvalue.FindStringSubmatch(value)
-		if len(value_elements) < 3 {
-			logger.Printf("found invalid link value: %+v", value)
+		// expect link variables to have a certain structure
+		_, host, port, err := parseLinkvalue(result[key][0])
+		if err != nil {
+			logger.Println(err)
 			continue
 		}
+		logger.Printf("found link variable %s -> host=%s, port=%s",
+			key, host, port)
 
-		new_key := fmt.Sprintf("%s_URL", key_elements[1])
-		if _, ok := result[new_key]; ok { // don't overwrite existing variables
-			continue
+		urlValue := fmt.Sprintf("http://%s:%s", host, port)
+
+		// create app url key
+		appKey := fmt.Sprintf("%s_URL", app)
+		if isSet := addNew(&result, appKey, urlValue); isSet {
+			logger.Printf("created new variable %s=%s\n", appKey, urlValue)
 		}
 
-		new_value := fmt.Sprintf("http://%s:%s", value_elements[2], value_elements[3])
-		result[new_key] = new_value
-		logger.Printf("creating new variable %s=%s\n", new_key, new_value)
+		// create app + port url key
+		appPortKey := fmt.Sprintf("%s_%s_URL", app, appport)
+		if isSet := addNew(&result, appPortKey, urlValue); isSet {
+			logger.Printf("created new variable %s=%s\n", appPortKey, urlValue)
+		}
+
+		logger.Printf("result[%s]: %+v", appKey, result[appKey])
+		logger.Printf("result[%s]: %+v", appPortKey, result[appPortKey])
 	}
 
 	return
 }
 
-func fillArgs(env DockerStarterEnvironment, cmdSrc string, dirSrc string, vars map[string]string) (cmd string, dir string, err error) {
+func addNew(m *map[string][]string, key string, value string) bool {
+
+	found := false
+	for _, old := range (*m)[key] {
+		if old == value {
+			found = true
+			break
+		}
+	}
+
+	if found {
+		return false
+	}
+
+	(*m)[key] = append((*m)[key], value)
+
+	return true
+}
+
+func parseLinkkey(key string) (app string, idx string, port string) {
+	var re = regexp.MustCompile(`^([^_]+)_(\d*).*PORT_(\d+)_TCP$`)
+
+	k := re.FindStringSubmatch(key)
+	if k == nil {
+		return
+	}
+
+	app = k[1]
+	idx = k[2]
+	port = k[3]
+	return
+}
+
+func parseLinkvalue(value string) (schema string, host string, port string, err error) {
+	var re = regexp.MustCompile(`^(.*)://(.*):(\d+)$`)
+
+	v := re.FindStringSubmatch(value)
+	if len(v) < 3 {
+		err = fmt.Errorf("found invalid link value in %s", value)
+		return
+	}
+
+	schema = v[1]
+	host = v[2]
+	port = v[3]
+
+	return
+}
+
+func fillArgs(env DockerStarterEnvironment, cmdSrc string, dirSrc string, vars map[string][]string) (cmd string, dir string, err error) {
 
 	logger := getLogger(env)
 
@@ -223,9 +288,28 @@ func fillArgs(env DockerStarterEnvironment, cmdSrc string, dirSrc string, vars m
 	return
 }
 
-func processString(src string, vars map[string]string) (string, error) {
+func extract(values []string, sepArg ...string) string {
 
-	t, err := template.New("Template").Parse(src)
+	if len(values) == 1 {
+		return values[0]
+	}
+
+	var sep string = ","
+	if len(sepArg) > 0 {
+		sep = sepArg[0]
+	}
+
+	return strings.Join(values, sep)
+}
+
+var funcMap template.FuncMap = template.FuncMap{
+	"join": strings.Join,
+	"E":    extract,
+}
+
+func processString(src string, vars map[string][]string) (string, error) {
+
+	t, err := template.New("Template").Funcs(funcMap).Parse(src)
 	if err != nil {
 		return "", err
 	}
@@ -267,7 +351,7 @@ func findTemplateFiles(env DockerStarterEnvironment, root string) (result []stri
 	return
 }
 
-func processTemplate(env DockerStarterEnvironment, dirname string, filename string, vars map[string]string, force bool) (err error) {
+func processTemplate(env DockerStarterEnvironment, dirname string, filename string, vars map[string][]string, force bool) (err error) {
 
 	logger := getLogger(env)
 
@@ -295,7 +379,7 @@ func processTemplate(env DockerStarterEnvironment, dirname string, filename stri
 	}
 
 	// find tempate files (src files)
-	t, err := template.ParseFiles(filename)
+	t, err := template.New(filename).Funcs(funcMap).ParseFiles(filename)
 	if err != nil {
 		logger.Printf("error processing template: %s", err)
 		return err
@@ -316,7 +400,7 @@ func processTemplate(env DockerStarterEnvironment, dirname string, filename stri
 	return
 }
 
-func executeCommand(env DockerStarterEnvironment, cmd string, osArgs []string, vars map[string]string) error {
+func executeCommand(env DockerStarterEnvironment, cmd string, osArgs []string, vars map[string][]string) error {
 
 	logger := getLogger(env)
 

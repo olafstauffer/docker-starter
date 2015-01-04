@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"path"
+	"reflect"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -29,6 +32,109 @@ func (e mock_environment) getEnvVariables() []string {
 	return *e.env
 }
 
+// ShouldContainOutput receives one buffer and one or more strings to look for..
+func ShouldContainOutput(actual interface{}, expected ...interface{}) string {
+
+	output := actual.(bytes.Buffer)
+
+	for _, e := range expected {
+
+		want := e.(string)
+
+		if !strings.Contains(output.String(), want) {
+			return fmt.Sprintf("missing %s from output", want)
+		}
+	}
+	return ""
+}
+
+func ShouldNotContainOutput(actual interface{}, expected ...interface{}) string {
+
+	output := actual.(bytes.Buffer)
+	if output.Len() != 0 {
+		return fmt.Sprintf("unexpected output: '%s'", output.String())
+	}
+	return ""
+}
+
+type Msg struct {
+	Message  string
+	Expected string
+	Actual   string
+}
+
+func getStructuredError(message string, expected interface{}, actual interface{}) string {
+
+	expectedString := fmt.Sprintf("%+v", expected)
+	actualString := fmt.Sprintf("%+v", actual)
+	m := Msg{message, expectedString, actualString}
+	serialized, _ := json.Marshal(m)
+	return string(serialized)
+}
+
+func ShouldHaveLength(actual interface{}, expected ...interface{}) string {
+
+	actualValue := reflect.ValueOf(actual)
+	actualLength := actualValue.Len()
+	expectedLength := expected[0].(int)
+
+	if actualLength != expectedLength {
+		msg := fmt.Sprintf("wrong length for %s, %+v", reflect.TypeOf(actual), actual)
+		return getStructuredError(msg, expectedLength, actualLength)
+	}
+	return ""
+}
+
+func TestFuncAddNew(t *testing.T) {
+
+	Convey("Given a empty map", t, func() {
+
+		Convey("The function should add the key/value pair to the map", func() {
+
+			vars := make(map[string][]string)
+
+			result := addNew(&vars, "key", "value")
+
+			So(result, ShouldBeTrue)
+			So(vars, ShouldHaveLength, 1)
+			So(vars["key"], ShouldHaveLength, 1)
+			So(vars["key"][0], ShouldEqual, "value")
+
+		})
+	})
+
+	Convey("Given a filled map", t, func() {
+
+		Convey("The function should add new key value pairs", func() {
+
+			vars := make(map[string][]string)
+			vars["key"] = append(vars["key"], "value1")
+
+			result := addNew(&vars, "key", "value2")
+
+			So(result, ShouldBeTrue)
+			So(vars, ShouldHaveLength, 1)
+			So(vars["key"], ShouldHaveLength, 2)
+			So(vars["key"][0], ShouldEqual, "value1")
+			So(vars["key"][1], ShouldEqual, "value2")
+		})
+
+		Convey("The function should not add already set key value pairs", func() {
+
+			vars := make(map[string][]string)
+			vars["key"] = append(vars["key"], "value1")
+
+			result := addNew(&vars, "key", "value1")
+
+			So(result, ShouldBeFalse)
+			So(vars, ShouldHaveLength, 1)
+			So(vars["key"], ShouldHaveLength, 1)
+			So(vars["key"][0], ShouldEqual, "value1")
+		})
+	})
+
+}
+
 func TestFuncReadExtendedVariables(t *testing.T) {
 
 	Convey("Given environment variables without a link variable", t, func() {
@@ -40,71 +146,91 @@ func TestFuncReadExtendedVariables(t *testing.T) {
 
 			result := readExtendedVariables(e)
 
-			So(result["FOO"], ShouldNotBeNil)
-			So(result["FOO"], ShouldEqual, "BAR")
-			So(len(result), ShouldEqual, 1)
-			So(stdout.String(), ShouldBeEmpty)
-			So(stderr.String(), ShouldBeEmpty)
+			Convey("The resulting arrays should be of correct length", func() {
+				So(result, ShouldHaveLength, 1)
+			})
+
+			Convey("The result should contain the correct key", func() {
+				So(result["FOO"], ShouldNotBeNil)
+				So(result["FOO"], ShouldHaveLength, 1)
+				So(result["FOO"][0], ShouldEqual, "BAR")
+			})
+
+			Convey("The output should contain expected strings", func() {
+				So(stdout, ShouldNotContainOutput)
+				So(stderr, ShouldNotContainOutput)
+			})
 		})
 
 	})
 
 	Convey("Given a link environment variable", t, func() {
-		Convey("The function should add an additional key to the result", func() {
+		Convey("The function should add additional keys to the result", func() {
 
 			var stdout, stderr bytes.Buffer
-			env := []string{"KIBANA_PORT_5601_TCP=tcp://127.0.0.1:5601"}
+			env := []string{"APP_PORT_1234_TCP=tcp://hostname:1234"}
 			e := mock_environment{&stdout, &stderr, &env}
 
 			result := readExtendedVariables(e)
 
-			So(result["KIBANA_URL"], ShouldNotBeNil)
-			So(result["KIBANA_URL"], ShouldEqual, "http://127.0.0.1:5601")
-			So(len(result), ShouldEqual, 2)
-			So(stderr.String(), ShouldContainSubstring, "found link variable")
-			So(stderr.String(), ShouldContainSubstring, "creating new variable")
-			So(stdout.String(), ShouldBeEmpty)
-		})
-
-		Convey("The function should never overwrite an existing variable", func() {
-
-			Convey("With the existing variable at the start of then list", func() {
-
-				var stdout, stderr bytes.Buffer
-				env := []string{"KIBANA_URL=FOO", "KIBANA_PORT_5601_TCP=tcp://127.0.0.1:5601"}
-				e := mock_environment{&stdout, &stderr, &env}
-
-				result := readExtendedVariables(e)
-
-				So(result["KIBANA_URL"], ShouldNotBeNil)
-				So(result["KIBANA_URL"], ShouldEqual, "FOO")
-				So(len(result), ShouldEqual, 2)
-				So(stderr.String(), ShouldContainSubstring, "found link variable")
-				So(stderr.String(), ShouldNotContainSubstring, "creating new variable")
-				So(stdout.String(), ShouldBeEmpty)
+			Convey("The result should be of correct length", func() {
+				So(len(result), ShouldEqual, 3)
 			})
 
-			Convey("With the existing variable at the end of then list", func() {
+			Convey("The result should contain a key with the application url", func() {
+				So(result["APP_URL"], ShouldNotBeNil)
+				So(result["APP_URL"], ShouldHaveLength, 1)
+				So(result["APP_URL"][0], ShouldEqual, "http://hostname:1234")
+			})
 
-				var stdout, stderr bytes.Buffer
-				env := []string{"KIBANA_PORT_5601_TCP=tcp://127.0.0.1:5601", "KIBANA_URL=FOO"}
-				e := mock_environment{&stdout, &stderr, &env}
+			Convey("The result should contain a key with the application+port url", func() {
+				So(result["APP_1234_URL"], ShouldNotBeNil)
+				So(result["APP_1234_URL"], ShouldHaveLength, 1)
+				So(result["APP_1234_URL"][0], ShouldEqual, "http://hostname:1234")
+			})
 
-				result := readExtendedVariables(e)
+			Convey("The output should contain expected strings", func() {
+				So(stderr, ShouldContainOutput, "found link variable", "created new variable")
+				So(stdout, ShouldNotContainOutput)
+			})
+		})
 
-				So(result["KIBANA_URL"], ShouldNotBeNil)
-				So(result["KIBANA_URL"], ShouldEqual, "FOO")
-				So(len(result), ShouldEqual, 2)
-				So(stderr.String(), ShouldContainSubstring, "found link variable")
-				// note: no check for log line containing "creating new variable" here
-				// beause its ok to create the variable as long as it gets overwritten later
-				// So(log.String(), ShouldNotContainSubstring, "creating new variable")
-				So(stdout.String(), ShouldBeEmpty)
+		Convey("The function should not overwrite existing variables", func() {
+
+			var stdout, stderr bytes.Buffer
+			env := []string{
+				"APP_URL=FOO",
+				"APP_1234_URL=BAR",
+				"APP_PORT_1234_TCP=tcp://hostname:1234",
+			}
+			e := mock_environment{&stdout, &stderr, &env}
+
+			result := readExtendedVariables(e)
+
+			Convey("The result should consist of three elements", func() {
+				So(len(result), ShouldEqual, 3)
+			})
+
+			Convey("The result should contain the existing app variable", func() {
+				So(result["APP_URL"], ShouldNotBeNil)
+				So(result["APP_URL"], ShouldHaveLength, 2)
+				So(result["APP_URL"][0], ShouldEqual, "FOO")
+			})
+
+			Convey("The result should contain the existing app+port variable", func() {
+				So(result["APP_1234_URL"], ShouldNotBeNil)
+				So(result["APP_1234_URL"], ShouldHaveLength, 2)
+				So(result["APP_1234_URL"][0], ShouldEqual, "BAR")
+			})
+
+			Convey("The output should contain expected strings", func() {
+				So(stderr, ShouldContainOutput, "found link variable", "created new variable")
+				So(stdout, ShouldNotContainOutput)
 			})
 
 		})
 
-		Convey("The function should ignore invalid link variables", func() {
+		Convey("The function should not generate keys from invalid link variables", func() {
 
 			var stdout, stderr bytes.Buffer
 			env := []string{"KIBANA_PORT_5601_TCP=tcp://INVALID"}
@@ -112,14 +238,142 @@ func TestFuncReadExtendedVariables(t *testing.T) {
 
 			result := readExtendedVariables(e)
 
+			So(result, ShouldHaveLength, 1)
 			So(result["KIBANA_URL"], ShouldBeEmpty)
-			So(len(result), ShouldEqual, 1)
-			So(stderr.String(), ShouldContainSubstring, "found link variable")
-			So(stderr.String(), ShouldContainSubstring, "found invalid link value")
-			So(stdout.String(), ShouldBeEmpty)
+			So(stderr, ShouldContainOutput, "found invalid link value")
+			So(stdout, ShouldNotContainOutput)
 		})
 
 	})
+
+	Convey("Given multiple link environment variables", t, func() {
+
+		Convey("With multiple ports for one application", func() {
+
+			Convey("The function should add multiple additional keys to the result", func() {
+
+				var stdout, stderr bytes.Buffer
+				env := []string{
+					"ES_PORT_9200_TCP=tcp://172.17.0.63:9200",
+					"ES_PORT_9300_TCP=tcp://172.17.0.63:9300",
+				}
+				e := mock_environment{&stdout, &stderr, &env}
+
+				result := readExtendedVariables(e)
+
+				Convey("The result should give the correct number of keys", func() {
+					So(result, ShouldHaveLength, 5)
+				})
+
+				Convey("The application url key should be set correctly", func() {
+					So(result["ES_URL"], ShouldNotBeNil)
+					So(result["ES_URL"], ShouldHaveLength, 2)
+					So(result["ES_URL"][0], ShouldEqual, "http://172.17.0.63:9200")
+					So(result["ES_URL"][1], ShouldEqual, "http://172.17.0.63:9300")
+				})
+
+				Convey("The application+port url should be set correctly", func() {
+					So(result["ES_9200_URL"], ShouldNotBeNil)
+					So(result["ES_9200_URL"], ShouldHaveLength, 1)
+					So(result["ES_9200_URL"][0], ShouldEqual, "http://172.17.0.63:9200")
+					So(result["ES_9300_URL"], ShouldNotBeNil)
+					So(result["ES_9300_URL"], ShouldHaveLength, 1)
+					So(result["ES_9300_URL"][0], ShouldEqual, "http://172.17.0.63:9300")
+				})
+
+				Convey("The output should be as expected", func() {
+					So(stderr, ShouldContainOutput, "found link variable", "created new variable")
+					So(stdout, ShouldNotContainOutput)
+				})
+			})
+		})
+
+		Convey("With multiple application (same port)", func() {
+
+			Convey("The function should add multiple additional keys to the result", func() {
+
+				var stdout, stderr bytes.Buffer
+				env := []string{
+					"APP_1_PORT_1234_TCP=tcp://hostname1:1234",
+					"APP_2_PORT_1234_TCP=tcp://hostname2:1234",
+				}
+				e := mock_environment{&stdout, &stderr, &env}
+
+				result := readExtendedVariables(e)
+
+				Convey("The result should give the correct number of keys", func() {
+					So(len(result), ShouldEqual, 4)
+				})
+
+				Convey("The application url key should be set correctly", func() {
+					So(result["APP_URL"], ShouldNotBeNil)
+					So(result["APP_URL"], ShouldHaveLength, 2)
+					So(result["APP_URL"][0], ShouldEqual, "http://hostname1:1234")
+					So(result["APP_URL"][1], ShouldEqual, "http://hostname2:1234")
+				})
+
+				Convey("The application+port url should be set correctly", func() {
+					So(result["APP_1234_URL"], ShouldNotBeNil)
+					So(result["APP_1234_URL"], ShouldHaveLength, 2)
+					So(result["APP_1234_URL"][0], ShouldEqual, "http://hostname1:1234")
+					So(result["APP_1234_URL"][1], ShouldEqual, "http://hostname2:1234")
+				})
+
+				Convey("The output should be as expected", func() {
+					So(stderr, ShouldContainOutput, "found link variable", "created new variable")
+					So(stdout, ShouldNotContainOutput)
+				})
+			})
+		})
+
+		Convey("With multiple application with multiple ports", func() {
+
+			Convey("The function should add multiple additional keys to the result", func() {
+
+				var stdout, stderr bytes.Buffer
+				env := []string{
+					"APP_1_PORT_1000_TCP=tcp://hostname1:1000",
+					"APP_1_PORT_2000_TCP=tcp://hostname1:2000",
+					"APP_2_PORT_1000_TCP=tcp://hostname2:1000",
+					"APP_2_PORT_2000_TCP=tcp://hostname2:2000",
+				}
+				e := mock_environment{&stdout, &stderr, &env}
+
+				result := readExtendedVariables(e)
+
+				Convey("The result should give the correct number of keys", func() {
+					So(len(result), ShouldEqual, 7)
+				})
+
+				Convey("The application url key should be set correctly", func() {
+					So(result["APP_URL"], ShouldNotBeNil)
+					So(result["APP_URL"], ShouldHaveLength, 4)
+					So(result["APP_URL"][0], ShouldEqual, "http://hostname1:1000")
+					So(result["APP_URL"][1], ShouldEqual, "http://hostname1:2000")
+					So(result["APP_URL"][2], ShouldEqual, "http://hostname2:1000")
+					So(result["APP_URL"][3], ShouldEqual, "http://hostname2:2000")
+				})
+
+				Convey("The application+port url should be set correctly", func() {
+					So(result["APP_1000_URL"], ShouldNotBeNil)
+					So(result["APP_1000_URL"], ShouldHaveLength, 2)
+					So(result["APP_1000_URL"][0], ShouldEqual, "http://hostname1:1000")
+					So(result["APP_1000_URL"][1], ShouldEqual, "http://hostname2:1000")
+					So(result["APP_2000_URL"], ShouldNotBeNil)
+					So(result["APP_2000_URL"], ShouldHaveLength, 2)
+					So(result["APP_2000_URL"][0], ShouldEqual, "http://hostname1:2000")
+					So(result["APP_2000_URL"][1], ShouldEqual, "http://hostname2:2000")
+				})
+
+				Convey("The output should be as expected", func() {
+					So(stderr, ShouldContainOutput, "found link variable", "created new variable")
+					So(stdout, ShouldNotContainOutput)
+				})
+			})
+		})
+
+	})
+
 }
 
 func TestFuncFillArgs(t *testing.T) {
@@ -133,15 +387,16 @@ func TestFuncFillArgs(t *testing.T) {
 
 			var cmdSrc string = "command"
 			var dirSrc string = "dir"
-			vars := map[string]string{"FOO": "BAR"}
+			vars := make(map[string][]string)
+			vars["FOO"] = append(vars["FOO"], "BAR")
 
 			cmdResult, dirResult, err := fillArgs(e, cmdSrc, dirSrc, vars)
 
 			So(err, ShouldBeNil)
 			So(cmdResult, ShouldEqual, "command")
 			So(dirResult, ShouldEqual, "dir")
-			So(stdout.String(), ShouldBeEmpty)
-			So(stderr.String(), ShouldBeEmpty)
+			So(stdout, ShouldNotContainOutput)
+			So(stderr, ShouldNotContainOutput)
 		})
 	})
 
@@ -152,17 +407,18 @@ func TestFuncFillArgs(t *testing.T) {
 			env := []string{}
 			e := mock_environment{&stdout, &stderr, &env}
 
-			var cmdSrc string = "command_{{.FOO}}_{{.FOO}}"
-			var dirSrc string = "dir_{{.FOO}}"
-			vars := map[string]string{"FOO": "BAR"}
+			var cmdSrc string = "command_{{E .FOO}}_{{E .FOO}}"
+			var dirSrc string = "dir_{{E .FOO}}"
+			vars := make(map[string][]string)
+			vars["FOO"] = append(vars["FOO"], "BAR")
 
 			cmdResult, dirResult, err := fillArgs(e, cmdSrc, dirSrc, vars)
 
 			So(err, ShouldBeNil)
 			So(cmdResult, ShouldEqual, "command_BAR_BAR")
 			So(dirResult, ShouldEqual, "dir_BAR")
-			So(stdout.String(), ShouldBeEmpty)
-			So(stderr.String(), ShouldBeEmpty)
+			So(stdout, ShouldNotContainOutput)
+			So(stderr, ShouldNotContainOutput)
 		})
 	})
 
@@ -175,7 +431,8 @@ func TestFuncFillArgs(t *testing.T) {
 
 			var cmdSrc string = "command{{.FOO"
 			var dirSrc string = ""
-			vars := map[string]string{"FOO": "BAR"}
+			vars := make(map[string][]string)
+			vars["FOO"] = append(vars["FOO"], "BAR")
 
 			cmdResult, dirResult, err := fillArgs(e, cmdSrc, dirSrc, vars)
 
@@ -183,8 +440,8 @@ func TestFuncFillArgs(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "unclosed action")
 			So(cmdResult, ShouldBeEmpty)
 			So(dirResult, ShouldBeEmpty)
-			So(stderr.String(), ShouldContainSubstring, "error processing")
-			So(stdout.String(), ShouldBeEmpty)
+			So(stderr, ShouldContainOutput, "error processing")
+			So(stdout, ShouldNotContainOutput)
 		})
 	})
 
@@ -197,7 +454,8 @@ func TestFuncFillArgs(t *testing.T) {
 
 			var cmdSrc string = ""
 			var dirSrc string = "dir{{.FOO"
-			vars := map[string]string{"FOO": "BAR"}
+			vars := make(map[string][]string)
+			vars["FOO"] = append(vars["FOO"], "BAR")
 
 			cmdResult, dirResult, err := fillArgs(e, cmdSrc, dirSrc, vars)
 
@@ -205,8 +463,8 @@ func TestFuncFillArgs(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "unclosed action")
 			So(cmdResult, ShouldBeEmpty)
 			So(dirResult, ShouldBeEmpty)
-			So(stderr.String(), ShouldContainSubstring, "error processing")
-			So(stdout.String(), ShouldBeEmpty)
+			So(stderr, ShouldContainOutput, "error processing")
+			So(stdout, ShouldNotContainOutput)
 		})
 	})
 
@@ -219,7 +477,7 @@ func TestFuncFillArgs(t *testing.T) {
 
 			var cmdSrc string = "command_{{.FOO}}"
 			var dirSrc string = ""
-			vars := map[string]string{}
+			vars := make(map[string][]string)
 
 			cmdResult, dirResult, err := fillArgs(e, cmdSrc, dirSrc, vars)
 
@@ -227,8 +485,125 @@ func TestFuncFillArgs(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "could not fill all markup")
 			So(cmdResult, ShouldBeEmpty)
 			So(dirResult, ShouldBeEmpty)
-			So(stderr.String(), ShouldContainSubstring, "error processing cmd")
-			So(stdout.String(), ShouldBeEmpty)
+			So(stderr, ShouldContainOutput, "error processing cmd")
+			So(stdout, ShouldNotContainOutput)
+		})
+	})
+}
+
+func TestFuncExtract(t *testing.T) {
+
+	Convey("Given a empty value", t, func() {
+
+		Convey("The function should return an error", func() {
+
+			var template string = "{{E }}"
+			vars := make(map[string][]string)
+
+			result, err := processString(template, vars)
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "wrong number of args")
+			So(result, ShouldBeEmpty)
+		})
+	})
+
+	Convey("Given a single value", t, func() {
+
+		Convey("The function should return the value as string", func() {
+
+			var template string = "{{E .FOO}}"
+			vars := make(map[string][]string)
+			vars["FOO"] = append(vars["FOO"], "BAR")
+
+			result, err := processString(template, vars)
+
+			So(err, ShouldBeNil)
+			So(result, ShouldEqual, "BAR")
+		})
+	})
+
+	Convey("Given multiple value", t, func() {
+
+		Convey("And no seperator given", func() {
+
+			Convey("The function should return a the values joined by ','", func() {
+
+				var template string = "{{E .FOO}}"
+				vars := make(map[string][]string)
+				vars["FOO"] = append(vars["FOO"], "value1")
+				vars["FOO"] = append(vars["FOO"], "value2")
+
+				result, err := processString(template, vars)
+
+				So(err, ShouldBeNil)
+				So(result, ShouldEqual, "value1,value2")
+			})
+		})
+
+		Convey("With a given seperator", func() {
+
+			Convey("The function should return a the values joined by stat separator", func() {
+
+				var template string = "{{E .FOO \"#\"}}"
+				vars := make(map[string][]string)
+				vars["FOO"] = append(vars["FOO"], "value1")
+				vars["FOO"] = append(vars["FOO"], "value2")
+
+				result, err := processString(template, vars)
+
+				So(err, ShouldBeNil)
+				So(result, ShouldEqual, "value1#value2")
+			})
+		})
+	})
+}
+
+func TestFuncProcessString(t *testing.T) {
+
+	Convey("Given a valid template", t, func() {
+
+		Convey("The function should return the input", func() {
+
+			var template string = "{{E .FOO}}"
+			vars := make(map[string][]string)
+			vars["FOO"] = append(vars["FOO"], "BAR", "BAR2")
+
+			result, err := processString(template, vars)
+
+			So(err, ShouldBeNil)
+			So(result, ShouldEqual, "BAR,BAR2")
+		})
+	})
+
+	Convey("Given a invalid template", t, func() {
+
+		Convey("The function should return an error", func() {
+
+			var template string = "{{"
+			vars := make(map[string][]string)
+			vars["FOO"] = append(vars["FOO"], "BAR")
+
+			result, err := processString(template, vars)
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "unexpected")
+			So(result, ShouldEqual, "")
+		})
+	})
+
+	Convey("Given a template with a join", t, func() {
+
+		Convey("The function should return the joined keys", func() {
+
+			var template string = "{{E .FOO \"#\"}}"
+			vars := make(map[string][]string)
+			vars["FOO"] = append(vars["FOO"], "e1", "e2", "e3")
+
+			result, err := processString(template, vars)
+
+			So(err, ShouldBeNil)
+			So(result, ShouldEqual, "e1#e2#e3")
 		})
 	})
 }
@@ -251,8 +626,8 @@ func TestFuncFindTemplateFiles(t *testing.T) {
 
 				So(err, ShouldBeNil)
 				So(len(files), ShouldEqual, 0)
-				So(stdout.String(), ShouldBeEmpty)
-				So(stderr.String(), ShouldBeEmpty)
+				So(stdout, ShouldNotContainOutput)
+				So(stderr, ShouldNotContainOutput)
 			})
 		})
 
@@ -275,9 +650,8 @@ func TestFuncFindTemplateFiles(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(len(files), ShouldEqual, 2)
 				So(files, ShouldContain, "template1.txt.tmpl")
-				So(stderr.String(), ShouldContainSubstring, "found template")
-				So(stderr.String(), ShouldContainSubstring, "found template")
-				So(stdout.String(), ShouldBeEmpty)
+				So(stderr, ShouldContainOutput, "found template")
+				So(stdout, ShouldNotContainOutput)
 			})
 		})
 	})
@@ -298,8 +672,8 @@ func TestFuncFindTemplateFiles(t *testing.T) {
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "no such file or directory")
 			So(len(files), ShouldEqual, 0)
-			So(stderr.String(), ShouldNotBeEmpty)
-			So(stdout.String(), ShouldBeEmpty)
+			So(stderr, ShouldContainOutput, "cannot read dir")
+			So(stdout, ShouldNotContainOutput)
 		})
 	})
 
@@ -338,13 +712,15 @@ func TestFuncProcessTemplate(t *testing.T) {
 				env := []string{}
 				e := mock_environment{&stdout, &stderr, &env}
 
-				vars := map[string]string{"FOO": "BAR"}
+				vars := make(map[string][]string)
+				vars["FOO"] = append(vars["FOO"], "BAR")
+
 				dirname, _ := ioutil.TempDir("", "_docker-starter")
 				defer os.RemoveAll(dirname)
 
 				targetname := fmt.Sprintf("test-%d", rand.Intn(10000))
 				templatename := fmt.Sprintf("%s.tmpl", targetname)
-				createFile(dirname, templatename, "{{.FOO}}")
+				createFile(dirname, templatename, "{{E .FOO}}")
 
 				err := processTemplate(e, dirname, templatename, vars, true)
 
@@ -369,7 +745,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 					env := []string{}
 					e := mock_environment{&stdout, &stderr, &env}
 
-					vars := map[string]string{"FOO": "BAR"}
+					vars := make(map[string][]string)
+					vars["FOO"] = append(vars["FOO"], "BAR")
+
 					dirname, _ := ioutil.TempDir("", "_docker-starter")
 					defer os.RemoveAll(dirname)
 
@@ -401,14 +779,16 @@ func TestFuncProcessTemplate(t *testing.T) {
 						env := []string{}
 						e := mock_environment{&stdout, &stderr, &env}
 
-						vars := map[string]string{"FOO": "BAR"}
+						vars := make(map[string][]string)
+						vars["FOO"] = append(vars["FOO"], "BAR")
+
 						dirname, _ := ioutil.TempDir("", "_docker-starter")
 						defer os.RemoveAll(dirname)
 
 						targetname := "test.txt"
 						createFile(dirname, targetname, "DONT OVERWRITE")
 						templatename := fmt.Sprintf("%s.tmpl", targetname)
-						createFile(dirname, templatename, "{{.FOO}}")
+						createFile(dirname, templatename, "{{E .FOO}}")
 
 						err := processTemplate(e, dirname, templatename, vars, true)
 
@@ -418,9 +798,8 @@ func TestFuncProcessTemplate(t *testing.T) {
 						So(len(readDir(dirname)), ShouldEqual, 2)
 						So(readDir(dirname), ShouldContain, targetname)
 						So(contents, ShouldEqual, "BAR")
-						So(stderr.String(), ShouldNotBeEmpty)
-						So(stderr.String(), ShouldContainSubstring, "overwriting existing file")
-						So(stdout.String(), ShouldBeEmpty)
+						So(stderr, ShouldContainOutput, "overwriting existing file")
+						So(stdout, ShouldNotContainOutput)
 					})
 				})
 
@@ -432,7 +811,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 						env := []string{}
 						e := mock_environment{&stdout, &stderr, &env}
 
-						vars := map[string]string{"FOO": "BAR"}
+						vars := make(map[string][]string)
+						vars["FOO"] = append(vars["FOO"], "BAR")
+
 						dirname, _ := ioutil.TempDir("", "_docker-starter")
 						defer os.RemoveAll(dirname)
 
@@ -450,9 +831,8 @@ func TestFuncProcessTemplate(t *testing.T) {
 						So(len(readDir(dirname)), ShouldEqual, 2)
 						So(readDir(dirname), ShouldContain, targetname)
 						So(contents, ShouldEqual, "DONT OVERWRITE")
-						So(stderr.String(), ShouldNotBeEmpty)
-						So(stderr.String(), ShouldContainSubstring, "error creating file")
-						So(stdout.String(), ShouldBeEmpty)
+						So(stderr, ShouldContainOutput, "error creating file")
+						So(stdout, ShouldNotContainOutput)
 					})
 				})
 
@@ -470,7 +850,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 			env := []string{}
 			e := mock_environment{&stdout, &stderr, &env}
 
-			vars := map[string]string{"FOO": "BAR"}
+			vars := make(map[string][]string)
+			vars["FOO"] = append(vars["FOO"], "BAR")
+
 			dirname, _ := ioutil.TempDir("", "_docker-starter")
 			defer os.RemoveAll(dirname)
 
@@ -479,9 +861,8 @@ func TestFuncProcessTemplate(t *testing.T) {
 
 			So(err, ShouldNotBeNil)
 			So(len(readDir(dirname)), ShouldEqual, 0)
-			So(stderr.String(), ShouldNotBeEmpty)
-			So(stderr.String(), ShouldContainSubstring, "error processing template")
-			So(stdout.String(), ShouldBeEmpty)
+			So(stderr, ShouldContainOutput, "error processing template")
+			So(stdout, ShouldNotContainOutput)
 		})
 
 	})
@@ -494,7 +875,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 			env := []string{}
 			e := mock_environment{&stdout, &stderr, &env}
 
-			vars := map[string]string{"FOO": "BAR"}
+			vars := make(map[string][]string)
+			vars["FOO"] = append(vars["FOO"], "BAR")
+
 			dirname, _ := ioutil.TempDir("", "_docker-starter")
 			defer os.RemoveAll(dirname)
 
@@ -506,9 +889,8 @@ func TestFuncProcessTemplate(t *testing.T) {
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "unclosed action")
 			So(len(readDir(dirname)), ShouldEqual, 1)
-			So(stderr.String(), ShouldNotBeEmpty)
-			So(stderr.String(), ShouldContainSubstring, "error processing template")
-			So(stdout.String(), ShouldBeEmpty)
+			So(stderr, ShouldContainOutput, "error processing template")
+			So(stdout, ShouldNotBeEmpty)
 		})
 	})
 
@@ -538,13 +920,14 @@ func TestFuncExecuteCommand(t *testing.T) {
 			e := mock_environment{&stdout, &stderr, &env}
 
 			args := []string{}
-			vars := map[string]string{}
+			vars := map[string][]string{}
 
 			err := executeCommand(e, "invalid-command-76238429", args, vars)
+			// fmt.Printf("OUT: %+v, ERR: %+v\n", stdout.String(), stderr.String())
 
 			So(err, ShouldNotBeNil)
-			So(stderr.String(), ShouldNotBeEmpty)
-			So(stdout.String(), ShouldBeEmpty)
+			So(stderr, ShouldContainOutput, "error executing command")
+			So(stdout, ShouldNotContainOutput)
 
 		})
 
