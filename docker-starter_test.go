@@ -3,8 +3,8 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"os"
 	"path"
@@ -14,15 +14,19 @@ import (
 )
 
 type mock_environment struct {
-	env []string
-	log *bytes.Buffer
+	stdout *bytes.Buffer
+	stderr *bytes.Buffer
+	env    *[]string
 }
 
-func (e mock_environment) getEnvVariables() []string {
-	return e.env
+func (e mock_environment) getStdout() io.Writer {
+	return e.stdout
 }
-func (e mock_environment) getLogger() *log.Logger {
-	return log.New(e.log, "docker-starter: ", log.LstdFlags|log.Lmicroseconds)
+func (e mock_environment) getStderr() io.Writer {
+	return e.stderr
+}
+func (e mock_environment) getEnvVariables() []string {
+	return *e.env
 }
 
 func TestFuncReadExtendedVariables(t *testing.T) {
@@ -30,16 +34,17 @@ func TestFuncReadExtendedVariables(t *testing.T) {
 	Convey("Given environment variables without a link variable", t, func() {
 		Convey("The function should return a map containing the environment", func() {
 
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{"FOO=BAR"}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			result := readExtendedVariables(e)
 
 			So(result["FOO"], ShouldNotBeNil)
 			So(result["FOO"], ShouldEqual, "BAR")
 			So(len(result), ShouldEqual, 1)
-			So(log.String(), ShouldBeEmpty)
+			So(stdout.String(), ShouldBeEmpty)
+			So(stderr.String(), ShouldBeEmpty)
 		})
 
 	})
@@ -47,66 +52,71 @@ func TestFuncReadExtendedVariables(t *testing.T) {
 	Convey("Given a link environment variable", t, func() {
 		Convey("The function should add an additional key to the result", func() {
 
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{"KIBANA_PORT_5601_TCP=tcp://127.0.0.1:5601"}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			result := readExtendedVariables(e)
 
 			So(result["KIBANA_URL"], ShouldNotBeNil)
 			So(result["KIBANA_URL"], ShouldEqual, "http://127.0.0.1:5601")
 			So(len(result), ShouldEqual, 2)
-			So(log.String(), ShouldContainSubstring, "found link variable")
-			So(log.String(), ShouldContainSubstring, "creating new variable")
+			So(stderr.String(), ShouldContainSubstring, "found link variable")
+			So(stderr.String(), ShouldContainSubstring, "creating new variable")
+			So(stdout.String(), ShouldBeEmpty)
 		})
 
 		Convey("The function should never overwrite an existing variable", func() {
 
 			Convey("With the existing variable at the start of then list", func() {
-				log := bytes.Buffer{}
+
+				var stdout, stderr bytes.Buffer
 				env := []string{"KIBANA_URL=FOO", "KIBANA_PORT_5601_TCP=tcp://127.0.0.1:5601"}
-				e := mock_environment{env, &log}
+				e := mock_environment{&stdout, &stderr, &env}
 
 				result := readExtendedVariables(e)
 
 				So(result["KIBANA_URL"], ShouldNotBeNil)
 				So(result["KIBANA_URL"], ShouldEqual, "FOO")
 				So(len(result), ShouldEqual, 2)
-				So(log.String(), ShouldContainSubstring, "found link variable")
-				So(log.String(), ShouldNotContainSubstring, "creating new variable")
+				So(stderr.String(), ShouldContainSubstring, "found link variable")
+				So(stderr.String(), ShouldNotContainSubstring, "creating new variable")
+				So(stdout.String(), ShouldBeEmpty)
 			})
 
 			Convey("With the existing variable at the end of then list", func() {
 
-				log := bytes.Buffer{}
+				var stdout, stderr bytes.Buffer
 				env := []string{"KIBANA_PORT_5601_TCP=tcp://127.0.0.1:5601", "KIBANA_URL=FOO"}
-				e := mock_environment{env, &log}
+				e := mock_environment{&stdout, &stderr, &env}
 
 				result := readExtendedVariables(e)
 
 				So(result["KIBANA_URL"], ShouldNotBeNil)
 				So(result["KIBANA_URL"], ShouldEqual, "FOO")
 				So(len(result), ShouldEqual, 2)
-				So(log.String(), ShouldContainSubstring, "found link variable")
+				So(stderr.String(), ShouldContainSubstring, "found link variable")
 				// note: no check for log line containing "creating new variable" here
 				// beause its ok to create the variable as long as it gets overwritten later
 				// So(log.String(), ShouldNotContainSubstring, "creating new variable")
+				So(stdout.String(), ShouldBeEmpty)
 			})
 
 		})
 
 		Convey("The function should ignore invalid link variables", func() {
 
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{"KIBANA_PORT_5601_TCP=tcp://INVALID"}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			result := readExtendedVariables(e)
 
 			So(result["KIBANA_URL"], ShouldBeEmpty)
 			So(len(result), ShouldEqual, 1)
-			So(log.String(), ShouldContainSubstring, "found link variable")
-			So(log.String(), ShouldContainSubstring, "found invalid link value")
+			So(stderr.String(), ShouldContainSubstring, "found link variable")
+			So(stderr.String(), ShouldContainSubstring, "found invalid link value")
+			So(stdout.String(), ShouldBeEmpty)
 		})
 
 	})
@@ -117,9 +127,9 @@ func TestFuncFillArgs(t *testing.T) {
 	Convey("Given parameters without template markup", t, func() {
 
 		Convey("The function should return the input", func() {
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			var cmdSrc string = "command"
 			var dirSrc string = "dir"
@@ -130,16 +140,17 @@ func TestFuncFillArgs(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(cmdResult, ShouldEqual, "command")
 			So(dirResult, ShouldEqual, "dir")
-			So(log.String(), ShouldBeEmpty)
+			So(stdout.String(), ShouldBeEmpty)
+			So(stderr.String(), ShouldBeEmpty)
 		})
 	})
 
 	Convey("Given parameters with valid template markup", t, func() {
 
 		Convey("The function should fill the markup", func() {
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			var cmdSrc string = "command_{{.FOO}}_{{.FOO}}"
 			var dirSrc string = "dir_{{.FOO}}"
@@ -150,16 +161,17 @@ func TestFuncFillArgs(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(cmdResult, ShouldEqual, "command_BAR_BAR")
 			So(dirResult, ShouldEqual, "dir_BAR")
-			So(log.String(), ShouldBeEmpty)
+			So(stdout.String(), ShouldBeEmpty)
+			So(stderr.String(), ShouldBeEmpty)
 		})
 	})
 
 	Convey("Given parameters with invalid markup in 'cmd'", t, func() {
 
 		Convey("The function should respond with an error", func() {
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			var cmdSrc string = "command{{.FOO"
 			var dirSrc string = ""
@@ -171,16 +183,17 @@ func TestFuncFillArgs(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "unclosed action")
 			So(cmdResult, ShouldBeEmpty)
 			So(dirResult, ShouldBeEmpty)
-			So(log.String(), ShouldContainSubstring, "error processing")
+			So(stderr.String(), ShouldContainSubstring, "error processing")
+			So(stdout.String(), ShouldBeEmpty)
 		})
 	})
 
 	Convey("Given parameters with invalid markup in 'dir'", t, func() {
 
 		Convey("The function should respond with an error", func() {
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			var cmdSrc string = ""
 			var dirSrc string = "dir{{.FOO"
@@ -192,16 +205,17 @@ func TestFuncFillArgs(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "unclosed action")
 			So(cmdResult, ShouldBeEmpty)
 			So(dirResult, ShouldBeEmpty)
-			So(log.String(), ShouldContainSubstring, "error processing")
+			So(stderr.String(), ShouldContainSubstring, "error processing")
+			So(stdout.String(), ShouldBeEmpty)
 		})
 	})
 
 	Convey("Given parameters with markup and empty environment", t, func() {
 
 		Convey("The function should respond with an error", func() {
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			var cmdSrc string = "command_{{.FOO}}"
 			var dirSrc string = ""
@@ -213,7 +227,8 @@ func TestFuncFillArgs(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "could not fill all markup")
 			So(cmdResult, ShouldBeEmpty)
 			So(dirResult, ShouldBeEmpty)
-			So(log.String(), ShouldContainSubstring, "error processing cmd")
+			So(stderr.String(), ShouldContainSubstring, "error processing cmd")
+			So(stdout.String(), ShouldBeEmpty)
 		})
 	})
 }
@@ -225,9 +240,9 @@ func TestFuncFindTemplateFiles(t *testing.T) {
 		Convey("Without template files", func() {
 
 			Convey("The function should return a empty list", func() {
-				log := bytes.Buffer{}
+				var stdout, stderr bytes.Buffer
 				env := []string{}
-				e := mock_environment{env, &log}
+				e := mock_environment{&stdout, &stderr, &env}
 
 				dirname, _ := ioutil.TempDir("", "_docker-starter")
 				defer os.RemoveAll(dirname)
@@ -236,16 +251,17 @@ func TestFuncFindTemplateFiles(t *testing.T) {
 
 				So(err, ShouldBeNil)
 				So(len(files), ShouldEqual, 0)
-				So(log.String(), ShouldBeEmpty)
+				So(stdout.String(), ShouldBeEmpty)
+				So(stderr.String(), ShouldBeEmpty)
 			})
 		})
 
 		Convey("With template files", func() {
 
 			Convey("The function should return a list of the template files", func() {
-				log := bytes.Buffer{}
+				var stdout, stderr bytes.Buffer
 				env := []string{}
-				e := mock_environment{env, &log}
+				e := mock_environment{&stdout, &stderr, &env}
 
 				dirname, _ := ioutil.TempDir("", "_docker-starter")
 				defer os.RemoveAll(dirname)
@@ -259,7 +275,9 @@ func TestFuncFindTemplateFiles(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(len(files), ShouldEqual, 2)
 				So(files, ShouldContain, "template1.txt.tmpl")
-				So(log.String(), ShouldContainSubstring, "found template")
+				So(stderr.String(), ShouldContainSubstring, "found template")
+				So(stderr.String(), ShouldContainSubstring, "found template")
+				So(stdout.String(), ShouldBeEmpty)
 			})
 		})
 	})
@@ -267,9 +285,9 @@ func TestFuncFindTemplateFiles(t *testing.T) {
 	Convey("Given a invalid directory", t, func() {
 
 		Convey("The function should return a error", func() {
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			dirname, _ := ioutil.TempDir("", "_docker-starter")
 			defer os.RemoveAll(dirname)
@@ -280,7 +298,8 @@ func TestFuncFindTemplateFiles(t *testing.T) {
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "no such file or directory")
 			So(len(files), ShouldEqual, 0)
-			So(log.String(), ShouldNotBeEmpty)
+			So(stderr.String(), ShouldNotBeEmpty)
+			So(stdout.String(), ShouldBeEmpty)
 		})
 	})
 
@@ -315,9 +334,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 
 			Convey("The function should create a processed file", func() {
 
-				log := bytes.Buffer{}
+				var stdout, stderr bytes.Buffer
 				env := []string{}
-				e := mock_environment{env, &log}
+				e := mock_environment{&stdout, &stderr, &env}
 
 				vars := map[string]string{"FOO": "BAR"}
 				dirname, _ := ioutil.TempDir("", "_docker-starter")
@@ -335,7 +354,8 @@ func TestFuncProcessTemplate(t *testing.T) {
 				So(len(readDir(dirname)), ShouldEqual, 2)
 				So(readDir(dirname), ShouldContain, targetname)
 				So(contents, ShouldEqual, "BAR")
-				So(log.String(), ShouldBeEmpty)
+				So(stdout.String(), ShouldBeEmpty)
+				So(stderr.String(), ShouldBeEmpty)
 			})
 		})
 
@@ -345,9 +365,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 
 				Convey("The function should return an error and not write to file", func() {
 
-					log := bytes.Buffer{}
+					var stdout, stderr bytes.Buffer
 					env := []string{}
-					e := mock_environment{env, &log}
+					e := mock_environment{&stdout, &stderr, &env}
 
 					vars := map[string]string{"FOO": "BAR"}
 					dirname, _ := ioutil.TempDir("", "_docker-starter")
@@ -366,7 +386,8 @@ func TestFuncProcessTemplate(t *testing.T) {
 					So(len(readDir(dirname)), ShouldEqual, 2)
 					So(readDir(dirname), ShouldContain, targetname)
 					So(contents, ShouldEqual, "DONT OVERWRITE")
-					So(log.String(), ShouldNotBeEmpty)
+					So(stderr.String(), ShouldNotBeEmpty)
+					So(stdout.String(), ShouldBeEmpty)
 				})
 			})
 
@@ -376,9 +397,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 
 					Convey("The function should log a warning an write to file", func() {
 
-						log := bytes.Buffer{}
+						var stdout, stderr bytes.Buffer
 						env := []string{}
-						e := mock_environment{env, &log}
+						e := mock_environment{&stdout, &stderr, &env}
 
 						vars := map[string]string{"FOO": "BAR"}
 						dirname, _ := ioutil.TempDir("", "_docker-starter")
@@ -397,8 +418,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 						So(len(readDir(dirname)), ShouldEqual, 2)
 						So(readDir(dirname), ShouldContain, targetname)
 						So(contents, ShouldEqual, "BAR")
-						So(log.String(), ShouldNotBeEmpty)
-						So(log.String(), ShouldContainSubstring, "overwriting existing file")
+						So(stderr.String(), ShouldNotBeEmpty)
+						So(stderr.String(), ShouldContainSubstring, "overwriting existing file")
+						So(stdout.String(), ShouldBeEmpty)
 					})
 				})
 
@@ -406,9 +428,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 
 					Convey("The function should return an error", func() {
 
-						log := bytes.Buffer{}
+						var stdout, stderr bytes.Buffer
 						env := []string{}
-						e := mock_environment{env, &log}
+						e := mock_environment{&stdout, &stderr, &env}
 
 						vars := map[string]string{"FOO": "BAR"}
 						dirname, _ := ioutil.TempDir("", "_docker-starter")
@@ -428,8 +450,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 						So(len(readDir(dirname)), ShouldEqual, 2)
 						So(readDir(dirname), ShouldContain, targetname)
 						So(contents, ShouldEqual, "DONT OVERWRITE")
-						So(log.String(), ShouldNotBeEmpty)
-						So(log.String(), ShouldContainSubstring, "error creating file")
+						So(stderr.String(), ShouldNotBeEmpty)
+						So(stderr.String(), ShouldContainSubstring, "error creating file")
+						So(stdout.String(), ShouldBeEmpty)
 					})
 				})
 
@@ -443,9 +466,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 
 		Convey("The function should return an error", func() {
 
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			vars := map[string]string{"FOO": "BAR"}
 			dirname, _ := ioutil.TempDir("", "_docker-starter")
@@ -456,8 +479,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 
 			So(err, ShouldNotBeNil)
 			So(len(readDir(dirname)), ShouldEqual, 0)
-			So(log.String(), ShouldNotBeEmpty)
-			So(log.String(), ShouldContainSubstring, "error processing template")
+			So(stderr.String(), ShouldNotBeEmpty)
+			So(stderr.String(), ShouldContainSubstring, "error processing template")
+			So(stdout.String(), ShouldBeEmpty)
 		})
 
 	})
@@ -466,9 +490,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 
 		Convey("The function should return an error and not write", func() {
 
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			vars := map[string]string{"FOO": "BAR"}
 			dirname, _ := ioutil.TempDir("", "_docker-starter")
@@ -482,8 +506,9 @@ func TestFuncProcessTemplate(t *testing.T) {
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "unclosed action")
 			So(len(readDir(dirname)), ShouldEqual, 1)
-			So(log.String(), ShouldNotBeEmpty)
-			So(log.String(), ShouldContainSubstring, "error processing template")
+			So(stderr.String(), ShouldNotBeEmpty)
+			So(stderr.String(), ShouldContainSubstring, "error processing template")
+			So(stdout.String(), ShouldBeEmpty)
 		})
 	})
 
@@ -508,9 +533,9 @@ func TestFuncExecuteCommand(t *testing.T) {
 
 		Convey("The function should return an error", func() {
 
-			log := bytes.Buffer{}
+			var stdout, stderr bytes.Buffer
 			env := []string{}
-			e := mock_environment{env, &log}
+			e := mock_environment{&stdout, &stderr, &env}
 
 			args := []string{}
 			vars := map[string]string{}
@@ -518,7 +543,8 @@ func TestFuncExecuteCommand(t *testing.T) {
 			err := executeCommand(e, "invalid-command-76238429", args, vars)
 
 			So(err, ShouldNotBeNil)
-			So(log.String(), ShouldNotBeEmpty)
+			So(stderr.String(), ShouldNotBeEmpty)
+			So(stdout.String(), ShouldBeEmpty)
 
 		})
 

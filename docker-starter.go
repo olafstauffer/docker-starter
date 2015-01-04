@@ -89,6 +89,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -101,18 +102,22 @@ import (
 
 // create interface to help testing with log output and environment variables
 type DockerStarterEnvironment interface {
+	getStdout() io.Writer
+	getStderr() io.Writer
 	getEnvVariables() []string
-	getLogger() *log.Logger
 }
 
 type environment struct {
 }
 
+func (environment) getStdout() io.Writer {
+	return os.Stdout
+}
+func (environment) getStderr() io.Writer {
+	return os.Stderr
+}
 func (environment) getEnvVariables() []string {
 	return os.Environ()
-}
-func (environment) getLogger() *log.Logger {
-	return log.New(os.Stdout, "docker-starter: ", 0)
 }
 
 func main() {
@@ -150,9 +155,13 @@ func exitOnError(err error) {
 	}
 }
 
+func getLogger(env DockerStarterEnvironment) *log.Logger {
+	return log.New(env.getStderr(), "docker-starter: ", 0)
+}
+
 func readExtendedVariables(env DockerStarterEnvironment) (result map[string]string) {
 
-	logger := env.getLogger()
+	logger := getLogger(env)
 	result = make(map[string]string)
 
 	// link environment variables should look like this
@@ -197,7 +206,7 @@ func readExtendedVariables(env DockerStarterEnvironment) (result map[string]stri
 
 func fillArgs(env DockerStarterEnvironment, cmdSrc string, dirSrc string, vars map[string]string) (cmd string, dir string, err error) {
 
-	logger := env.getLogger()
+	logger := getLogger(env)
 
 	cmd, err = processString(cmdSrc, vars)
 	if err != nil {
@@ -240,7 +249,7 @@ func processString(src string, vars map[string]string) (string, error) {
 
 func findTemplateFiles(env DockerStarterEnvironment, root string) (result []string, err error) {
 
-	logger := env.getLogger()
+	logger := getLogger(env)
 
 	var files []os.FileInfo
 	files, err = ioutil.ReadDir(root)
@@ -260,7 +269,7 @@ func findTemplateFiles(env DockerStarterEnvironment, root string) (result []stri
 
 func processTemplate(env DockerStarterEnvironment, dirname string, filename string, vars map[string]string, force bool) (err error) {
 
-	logger := env.getLogger()
+	logger := getLogger(env)
 
 	os.Chdir(dirname)
 
@@ -309,7 +318,7 @@ func processTemplate(env DockerStarterEnvironment, dirname string, filename stri
 
 func executeCommand(env DockerStarterEnvironment, cmd string, osArgs []string, vars map[string]string) error {
 
-	logger := env.getLogger()
+	logger := getLogger(env)
 
 	// find the given command
 	binary, err := exec.LookPath(cmd)
