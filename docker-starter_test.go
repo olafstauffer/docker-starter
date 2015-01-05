@@ -491,73 +491,73 @@ func TestFuncFillArgs(t *testing.T) {
 	})
 }
 
-func TestFuncExtract(t *testing.T) {
+// func TestFuncExtract(t *testing.T) {
 
-	Convey("Given a empty value", t, func() {
+// 	Convey("Given a empty value", t, func() {
 
-		Convey("The function should return an error", func() {
+// 		Convey("The function should return an error", func() {
 
-			var template string = "{{E }}"
-			vars := make(map[string][]string)
+// 			var template string = "{{E }}"
+// 			vars := make(map[string][]string)
 
-			result, err := processString(template, vars)
+// 			result, err := processString(template, vars)
 
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "wrong number of args")
-			So(result, ShouldBeEmpty)
-		})
-	})
+// 			So(err, ShouldNotBeNil)
+// 			So(err.Error(), ShouldContainSubstring, "wrong number of args")
+// 			So(result, ShouldBeEmpty)
+// 		})
+// 	})
 
-	Convey("Given a single value", t, func() {
+// 	Convey("Given a single value", t, func() {
 
-		Convey("The function should return the value as string", func() {
+// 		Convey("The function should return the value as string", func() {
 
-			var template string = "{{E .FOO}}"
-			vars := make(map[string][]string)
-			vars["FOO"] = append(vars["FOO"], "BAR")
+// 			var template string = "{{E .FOO}}"
+// 			vars := make(map[string][]string)
+// 			vars["FOO"] = append(vars["FOO"], "BAR")
 
-			result, err := processString(template, vars)
+// 			result, err := processString(template, vars)
 
-			So(err, ShouldBeNil)
-			So(result, ShouldEqual, "BAR")
-		})
-	})
+// 			So(err, ShouldBeNil)
+// 			So(result, ShouldEqual, "BAR")
+// 		})
+// 	})
 
-	Convey("Given multiple value", t, func() {
+// 	Convey("Given multiple value", t, func() {
 
-		Convey("And no seperator given", func() {
+// 		Convey("And no seperator given", func() {
 
-			Convey("The function should return a the values joined by ','", func() {
+// 			Convey("The function should return a the values joined by ','", func() {
 
-				var template string = "{{E .FOO}}"
-				vars := make(map[string][]string)
-				vars["FOO"] = append(vars["FOO"], "value1")
-				vars["FOO"] = append(vars["FOO"], "value2")
+// 				var template string = "{{E .FOO}}"
+// 				vars := make(map[string][]string)
+// 				vars["FOO"] = append(vars["FOO"], "value1")
+// 				vars["FOO"] = append(vars["FOO"], "value2")
 
-				result, err := processString(template, vars)
+// 				result, err := processString(template, vars)
 
-				So(err, ShouldBeNil)
-				So(result, ShouldEqual, "value1,value2")
-			})
-		})
+// 				So(err, ShouldBeNil)
+// 				So(result, ShouldEqual, "value1,value2")
+// 			})
+// 		})
 
-		Convey("With a given seperator", func() {
+// 		Convey("With a given seperator", func() {
 
-			Convey("The function should return a the values joined by stat separator", func() {
+// 			Convey("The function should return a the values joined by stat separator", func() {
 
-				var template string = "{{E .FOO \"#\"}}"
-				vars := make(map[string][]string)
-				vars["FOO"] = append(vars["FOO"], "value1")
-				vars["FOO"] = append(vars["FOO"], "value2")
+// 				var template string = "{{E .FOO \"#\"}}"
+// 				vars := make(map[string][]string)
+// 				vars["FOO"] = append(vars["FOO"], "value1")
+// 				vars["FOO"] = append(vars["FOO"], "value2")
 
-				result, err := processString(template, vars)
+// 				result, err := processString(template, vars)
 
-				So(err, ShouldBeNil)
-				So(result, ShouldEqual, "value1#value2")
-			})
-		})
-	})
-}
+// 				So(err, ShouldBeNil)
+// 				So(result, ShouldEqual, "value1#value2")
+// 			})
+// 		})
+// 	})
+// }
 
 func TestFuncProcessString(t *testing.T) {
 
@@ -565,15 +565,174 @@ func TestFuncProcessString(t *testing.T) {
 
 		Convey("The function should return the input", func() {
 
-			var template string = "{{E .FOO}}"
+			var template string = "TEST"
 			vars := make(map[string][]string)
-			vars["FOO"] = append(vars["FOO"], "BAR", "BAR2")
+			vars["FOO"] = append(vars["FOO"], "BAR")
 
 			result, err := processString(template, vars)
 
 			So(err, ShouldBeNil)
-			So(result, ShouldEqual, "BAR,BAR2")
+			So(result, ShouldEqual, "TEST")
 		})
+
+		Convey("Given a template with function E", func() {
+
+			Convey("The function should return the first element", func() {
+
+				var template string = "{{E .FOO}}"
+
+				vars1 := make(map[string][]string)
+				vars1["FOO"] = append(vars1["FOO"], "BAR", "BAR2")
+				result, err := processString(template, vars1)
+				So(err, ShouldBeNil)
+				So(result, ShouldEqual, "BAR")
+
+				vars2 := make(map[string][]string)
+				vars2["FOO"] = append(vars2["FOO"], "test", "test2")
+				result, err = processString(template, vars2)
+				So(err, ShouldBeNil)
+				So(result, ShouldEqual, "test")
+
+			})
+		})
+
+		Convey("Given a template with function J (without separator)", func() {
+
+			Convey("Given the vars hold multiple elements", func() {
+
+				Convey("The function should return the elements joined by ','", func() {
+
+					var template string = "{{J .FOO}}"
+
+					vars1 := make(map[string][]string)
+					vars1["FOO"] = append(vars1["FOO"], "BAR", "BAR2")
+					result, err := processString(template, vars1)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "BAR,BAR2")
+
+					vars2 := make(map[string][]string)
+					vars2["FOO"] = append(vars2["FOO"], "test", "test2")
+					result, err = processString(template, vars2)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "test,test2")
+				})
+			})
+			Convey("Given the vars hold one element", func() {
+
+				Convey("The function should return the element", func() {
+
+					var template string = "{{J .FOO}}"
+
+					vars1 := make(map[string][]string)
+					vars1["FOO"] = append(vars1["FOO"], "BAR")
+					result, err := processString(template, vars1)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "BAR")
+
+					vars2 := make(map[string][]string)
+					vars2["FOO"] = append(vars2["FOO"], "test")
+					result, err = processString(template, vars2)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "test")
+				})
+			})
+			Convey("Given the vars hold no element", func() {
+
+				Convey("The function should return an empty string", func() {
+
+					var template string = "{{J .FOO}}"
+
+					vars := make(map[string][]string)
+					vars["FOO"] = []string{}
+					result, err := processString(template, vars)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "")
+				})
+			})
+			Convey("Given the key does not exist", func() {
+
+				Convey("The function should return an empty string", func() {
+
+					var template string = "{{J .FOO}}"
+
+					vars := make(map[string][]string)
+					result, err := processString(template, vars)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "")
+				})
+			})
+		})
+
+		Convey("Given a template with function J (with separator)", func() {
+
+			Convey("Given the vars hold multiple elements", func() {
+
+				Convey("The function should return the joined elements", func() {
+
+					var template string = "{{J .FOO \"#\"}}"
+
+					vars1 := make(map[string][]string)
+					vars1["FOO"] = append(vars1["FOO"], "BAR", "BAR2")
+					result, err := processString(template, vars1)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "BAR#BAR2")
+
+					vars2 := make(map[string][]string)
+					vars2["FOO"] = append(vars2["FOO"], "test", "test2")
+					result, err = processString(template, vars2)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "test#test2")
+				})
+			})
+
+			Convey("Given the vars hold one element", func() {
+
+				Convey("The function should return the element", func() {
+
+					var template string = "{{J .FOO \"#\"}}"
+
+					vars1 := make(map[string][]string)
+					vars1["FOO"] = append(vars1["FOO"], "BAR")
+					result, err := processString(template, vars1)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "BAR")
+
+					vars2 := make(map[string][]string)
+					vars2["FOO"] = append(vars2["FOO"], "test")
+					result, err = processString(template, vars2)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "test")
+				})
+			})
+
+			Convey("Given the vars hold no element", func() {
+
+				Convey("The function should return an empty string", func() {
+
+					var template string = "{{J .FOO \"#\"}}"
+
+					vars := make(map[string][]string)
+					vars["FOO"] = []string{}
+					result, err := processString(template, vars)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "")
+				})
+			})
+
+			Convey("Given key doen not exit in vars", func() {
+
+				Convey("The function should return an empty string", func() {
+
+					var template string = "{{J .FOO \"#\"}}"
+
+					vars := make(map[string][]string)
+					result, err := processString(template, vars)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "")
+				})
+			})
+		})
+
 	})
 
 	Convey("Given a invalid template", t, func() {
@@ -596,7 +755,7 @@ func TestFuncProcessString(t *testing.T) {
 
 		Convey("The function should return the joined keys", func() {
 
-			var template string = "{{E .FOO \"#\"}}"
+			var template string = "{{J .FOO \"#\"}}"
 			vars := make(map[string][]string)
 			vars["FOO"] = append(vars["FOO"], "e1", "e2", "e3")
 

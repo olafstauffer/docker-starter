@@ -294,11 +294,19 @@ func fillArgs(env DockerStarterEnvironment, cmdSrc string, dirSrc string, vars m
 	return
 }
 
-func extract(values []string, sepArg ...string) string {
+var funcMap template.FuncMap = template.FuncMap{
+	"E": extractFirstElement,
+	"J": extractJoinedElements,
+}
 
-	if len(values) == 1 {
+func extractFirstElement(values []string) string {
+	if len(values) > 0 {
 		return values[0]
 	}
+	return ""
+}
+
+func extractJoinedElements(values []string, sepArg ...string) string {
 
 	var sep string = ","
 	if len(sepArg) > 0 {
@@ -306,11 +314,6 @@ func extract(values []string, sepArg ...string) string {
 	}
 
 	return strings.Join(values, sep)
-}
-
-var funcMap template.FuncMap = template.FuncMap{
-	"join": strings.Join,
-	"E":    extract,
 }
 
 func processString(src string, vars map[string][]string) (string, error) {
