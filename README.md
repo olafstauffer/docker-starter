@@ -35,24 +35,25 @@ A typical pattern is to provide those config files via docker volume to the appl
 Run kibana on port 8000 and connect it to the linked elasticsearch container.
 
 #### fig.yml
-        kibana:
-            image: ollo/kibana
-            ports:
-            - "8000:8000"
-            links:
-            - elasticsearch
-            environment:
-            - KIBANA_PORT=8000
-        elasticsearchcontainer:
-          image: dockerfile/elasticsearch
-          ports:
-          - 9200
-          - 9300
+    kibana:
+        image: ollo/kibana
+        ports:
+        - "8000:8000"
+        links:
+        - elasticsearch
+        environment:
+        - KIBANA_PORT=8000
+    elasticsearch:
+        image: dockerfile/elasticsearch
+        ports:
+        - 9200
+        - 9300
 
 #### .../kibana/config/kibana.yml.tmpl (inside docker image)
-        ...
-        elasticsearch: "{{E .ELASTICSEARCH_9200_URL}}"
-        port: {{if .KIBANA_PORT}}{{E .KIBANA_PORT}}{{else}}5601{{end}}
+    ...
+    elasticsearch: "{{E .ELASTICSEARCH_9200_URL}}"
+    port: {{if .KIBANA_PORT}}{{E .KIBANA_PORT}}{{else}}5601{{end}}
+    ...
 
 Note:
 
@@ -87,12 +88,12 @@ The go templating engine is used. (For more info on the engine see see: http://g
 
 Additionally there are two template pipeline functions to make it easy to work with the internal data structure (the map of string slices).
 
-E
-: Returns the first value element for a key (or "" if the key does not exist)  
+##### E  
+Returns the first value element for a key (or "" if the key does not exist)  
 Example: {{E .FOO}} gives "BAR" if value is set to ["BAR", "IT", "IS"]
 
-J [sep]
-: Returns a the value elements joined by the separator (default to ',')  
+##### J [sep]  
+Returns a the value elements joined by the separator (default to ',')  
 Example: {{J .FOO "#"}} gives "BAR#IT#IS" if value is set to ["BAR", "IT", "IS"] 
 
 #### Link Variables
