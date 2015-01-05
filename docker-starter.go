@@ -93,10 +93,10 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 	"text/template"
 )
 
@@ -143,7 +143,7 @@ func main() {
 		exitOnError(err)
 	}
 
-	execErr := executeCommand(e, cmd, os.Args, vars)
+	execErr := executeCommand(e, cmd, flag.Args(), vars)
 	exitOnError(execErr)
 
 	os.Exit(0)
@@ -156,7 +156,7 @@ func exitOnError(err error) {
 }
 
 func getLogger(env DockerStarterEnvironment) *log.Logger {
-	return log.New(env.getStderr(), "docker-starter: ", 0)
+	return log.New(env.getStderr(), "docker-starter: ", log.LstdFlags)
 }
 
 func readExtendedVariables(env DockerStarterEnvironment) (result map[string][]string) {
@@ -400,35 +400,36 @@ func processTemplate(env DockerStarterEnvironment, dirname string, filename stri
 	return
 }
 
-func executeCommand(env DockerStarterEnvironment, cmd string, osArgs []string, vars map[string][]string) error {
+func executeCommand(env DockerStarterEnvironment, cmd string, args []string, vars map[string][]string) error {
 
 	logger := getLogger(env)
 
-	// find the given command
-	binary, err := exec.LookPath(cmd)
+	// transform the map back to a list of type "key=value"
+	var commandVars []string
+	for k, v := range vars {
+		commandVars = append(commandVars, fmt.Sprintf("%s=%s", k, v[0]))
+	}
+
+	command := exec.Command(cmd, args...)
+	command.Stdout = env.getStdout()
+	command.Stderr = env.getStderr()
+	command.Env = commandVars
+
+	err := command.Start()
 	if err != nil {
 		logger.Printf("error executing command: %s", err)
 		return err
 	}
-	logger.Printf("starting: %s", binary)
+	logger.Printf("process %d started", command.Process.Pid)
 
-	// prepend the args list with the command
-	args := []string{cmd}
-	for _, a := range osArgs {
-		args = append(args, a)
-	}
-
-	// transform the map back to a list of type "key=value"
-	var osVariables []string
-	for key, value := range vars {
-		osVariables = append(osVariables, fmt.Sprintf("%s=%s", key, value))
-	}
-
-	// // call the command
-	err = syscall.Exec(binary, args, osVariables)
-	if err != nil {
-		return err
-	}
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs) // catch all signals
+	go func() {
+		for sig := range sigs { // keep receiving signals
+			command.Process.Signal(sig) // forward signal to command
+		}
+	}()
+	err = command.Wait() // block until command exits
 
 	return nil
 }

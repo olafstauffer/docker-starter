@@ -923,7 +923,6 @@ func TestFuncExecuteCommand(t *testing.T) {
 			vars := map[string][]string{}
 
 			err := executeCommand(e, "invalid-command-76238429", args, vars)
-			// fmt.Printf("OUT: %+v, ERR: %+v\n", stdout.String(), stderr.String())
 
 			So(err, ShouldNotBeNil)
 			So(stderr, ShouldContainOutput, "error executing command")
@@ -934,13 +933,45 @@ func TestFuncExecuteCommand(t *testing.T) {
 	})
 	Convey("Given a valid command", t, func() {
 
-		Convey("The command should be found", nil)
+		Convey("The command should run", func() {
 
-		Convey("The command should be started", nil)
+			var stdout, stderr bytes.Buffer
+			env := []string{}
+			e := mock_environment{&stdout, &stderr, &env}
 
-		Convey("The command should see the given environment variables", nil)
+			cmd := "echo"
+			args := []string{"HELLO"}
+			vars := map[string][]string{}
 
-		Convey("The command should see the given command line options", nil)
+			err := executeCommand(e, cmd, args, vars)
+			fmt.Printf("OUT: %+v, ERR: %+v\n", stdout.String(), stderr.String())
+
+			So(err, ShouldBeNil)
+			So(stderr, ShouldContainOutput, "process", "started")
+			So(stdout, ShouldContainOutput, "HELLO")
+
+		})
+
+		Convey("The command should see the given environment variables", func() {
+
+			var stdout, stderr bytes.Buffer
+			env := []string{}
+			e := mock_environment{&stdout, &stderr, &env}
+
+			cmd := "env"
+			args := []string{}
+			random := fmt.Sprintf("foo-%d", rand.Intn(10000))
+			vars := map[string][]string{}
+			vars["FOO"] = append(vars["FOO"], "BAR", "BAR2")
+			vars[random] = append(vars[random], "rand1", "rand2")
+
+			err := executeCommand(e, cmd, args, vars)
+			// fmt.Printf("OUT: %+v, ERR: %+v\n", stdout.String(), stderr.String())
+
+			So(err, ShouldBeNil)
+			So(stderr, ShouldContainOutput, "process", "started")
+			So(stdout, ShouldContainOutput, "FOO", "BAR", random, "rand1")
+		})
 
 	})
 
