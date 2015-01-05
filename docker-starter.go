@@ -79,6 +79,7 @@ Example: Environment with Elasticsearch and Kibana
 Notes:
 
     * For more info on go templates see: http://golang.org/pkg/text/template/
+    * Static binaries built with :goxc -d=binaries -pv=0.2.0 -bc="linux,386 darwin"
 
 */
 
@@ -164,6 +165,8 @@ func readExtendedVariables(env DockerStarterEnvironment) (result map[string][]st
 	logger := getLogger(env)
 	result = make(map[string][]string)
 
+	summary := make(map[string]bool)
+
 	// convert slice of strings from environment to resulting data structure
 	// here every key can have multiple value associated with it
 	// note: the template function "E"  expects thos values to be ordered, the most
@@ -196,25 +199,28 @@ func readExtendedVariables(env DockerStarterEnvironment) (result map[string][]st
 			logger.Println(err)
 			continue
 		}
-		logger.Printf("found link variable %s -> host=%s, port=%s",
-			key, host, port)
+		// logger.Printf("found link variable %s -> host=%s, port=%s",
+		// 	key, host, port)
 
 		urlValue := fmt.Sprintf("http://%s:%s", host, port)
 
 		// create app url key
 		appKey := fmt.Sprintf("%s_URL", app)
 		if isSet := addNew(&result, appKey, urlValue); isSet {
-			logger.Printf("created new variable %s=%s\n", appKey, urlValue)
+			summary[appKey] = true
+			// logger.Printf("created new variable %s=%s\n", appKey, urlValue)
 		}
 
 		// create app + port url key
 		appPortKey := fmt.Sprintf("%s_%s_URL", app, appport)
 		if isSet := addNew(&result, appPortKey, urlValue); isSet {
-			logger.Printf("created new variable %s=%s\n", appPortKey, urlValue)
+			summary[appPortKey] = true
+			// logger.Printf("created new variable %s=%s\n", appPortKey, urlValue)
 		}
+	}
 
-		logger.Printf("result[%s]: %+v", appKey, result[appKey])
-		logger.Printf("result[%s]: %+v", appPortKey, result[appPortKey])
+	for key, _ := range summary {
+		logger.Printf("use: %s = %+v", key, result[key])
 	}
 
 	return

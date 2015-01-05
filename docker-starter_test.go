@@ -190,7 +190,7 @@ func TestFuncReadExtendedVariables(t *testing.T) {
 			})
 
 			Convey("The output should contain expected strings", func() {
-				So(stderr, ShouldContainOutput, "found link variable", "created new variable")
+				So(stderr, ShouldContainOutput, "use:", "APP_URL", "APP_1234_URL")
 				So(stdout, ShouldNotContainOutput)
 			})
 		})
@@ -224,7 +224,7 @@ func TestFuncReadExtendedVariables(t *testing.T) {
 			})
 
 			Convey("The output should contain expected strings", func() {
-				So(stderr, ShouldContainOutput, "found link variable", "created new variable")
+				So(stderr, ShouldContainOutput, "use:", "APP_URL", "APP_1234_URL")
 				So(stdout, ShouldNotContainOutput)
 			})
 
@@ -282,7 +282,7 @@ func TestFuncReadExtendedVariables(t *testing.T) {
 				})
 
 				Convey("The output should be as expected", func() {
-					So(stderr, ShouldContainOutput, "found link variable", "created new variable")
+					So(stderr, ShouldContainOutput, "use:", "ES_URL", "ES_9200_URL", "ES_9300_URL")
 					So(stdout, ShouldNotContainOutput)
 				})
 			})
@@ -320,7 +320,7 @@ func TestFuncReadExtendedVariables(t *testing.T) {
 				})
 
 				Convey("The output should be as expected", func() {
-					So(stderr, ShouldContainOutput, "found link variable", "created new variable")
+					So(stderr, ShouldContainOutput, "use:", "APP_URL", "APP_1234_URL")
 					So(stdout, ShouldNotContainOutput)
 				})
 			})
@@ -366,7 +366,7 @@ func TestFuncReadExtendedVariables(t *testing.T) {
 				})
 
 				Convey("The output should be as expected", func() {
-					So(stderr, ShouldContainOutput, "found link variable", "created new variable")
+					So(stderr, ShouldContainOutput, "use:", "APP_URL", "APP_1000_URL", "APP_2000_URL")
 					So(stdout, ShouldNotContainOutput)
 				})
 			})
@@ -944,7 +944,6 @@ func TestFuncExecuteCommand(t *testing.T) {
 			vars := map[string][]string{}
 
 			err := executeCommand(e, cmd, args, vars)
-			fmt.Printf("OUT: %+v, ERR: %+v\n", stdout.String(), stderr.String())
 
 			So(err, ShouldBeNil)
 			So(stderr, ShouldContainOutput, "process", "started")
