@@ -577,23 +577,40 @@ func TestFuncProcessString(t *testing.T) {
 
 		Convey("Given a template with function E", func() {
 
-			Convey("The function should return the first element", func() {
+			Convey("Given the key exists and vars has multiple elements", func() {
 
-				var template string = "{{E .FOO}}"
+				Convey("The function should return the first element", func() {
 
-				vars1 := make(map[string][]string)
-				vars1["FOO"] = append(vars1["FOO"], "BAR", "BAR2")
-				result, err := processString(template, vars1)
-				So(err, ShouldBeNil)
-				So(result, ShouldEqual, "BAR")
+					var template string = "{{E .FOO}}"
 
-				vars2 := make(map[string][]string)
-				vars2["FOO"] = append(vars2["FOO"], "test", "test2")
-				result, err = processString(template, vars2)
-				So(err, ShouldBeNil)
-				So(result, ShouldEqual, "test")
+					vars1 := make(map[string][]string)
+					vars1["FOO"] = append(vars1["FOO"], "BAR", "BAR2")
+					result, err := processString(template, vars1)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "BAR")
 
+					vars2 := make(map[string][]string)
+					vars2["FOO"] = append(vars2["FOO"], "test", "test2")
+					result, err = processString(template, vars2)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "test")
+				})
 			})
+
+			Convey("Given the key does not exist", func() {
+
+				Convey("The function should return an empty string", func() {
+
+					var template string = "{{E .FOO}}"
+
+					vars := make(map[string][]string)
+					result, err := processString(template, vars)
+					So(err, ShouldBeNil)
+					So(result, ShouldEqual, "")
+
+				})
+			})
+
 		})
 
 		Convey("Given a template with function J (without separator)", func() {
