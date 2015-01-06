@@ -6,17 +6,21 @@ Tool to modify config files based on environment variables on docker startup.
 
 Some applications do not allow to specify the connection configuration they need via the command arguments and therefore cannot be configured via the docker cmd arguments. Usually those application need some config files on startup.
 
-A typical pattern is to provide those config files via docker volume to the application. Unfortunatelly this can become very messy setting up complex dev environments. Especially when a connection string is the only information that needs to be modified and we want to use docker links (or the link within a fig.yml). This usually results in a lot of local config files that have to be manually synced with a fig.yml.
+A typical pattern is to provide those config files via docker volume to the application. Unfortunatelly setting up complex dev environments can become very messy. Especially when using docker links and a connection string is the only information that needs to be modified. This usually results in a lot of local config files that have to be manually synced within a fig.yml or the need to write some wrapper around calling _docker run_ or _fig_ itself.
+
+This tool tries to make the wiring between containers easier.
 
 
 ## What does it do?
 
-  * meant to be used as docker CMD - runs on container start
-  * processes templates within config files
-  * processes templates within command line args
-  * replaces tempate markup with environment variables
-  * starts the actual container application (additional args are passed)
-  * forwards signals to the running application
+  * meant to be used as docker CMD
+  * write config files based on templates
+  * use templates within command line arguments
+  * search for link environment variables
+  * combine multiple links into single config variable
+  * provide environment variables to the template engine
+  * start the actual container application (and forward args)
+  * forward signals to the running application
 
 
 ## Usage
@@ -62,7 +66,7 @@ Note:
  * If the environment variable _KIBANA_PORT_ is not given it will use 5601 as default.
 
 
-#### Creating Kibana image with docker-starter
+#### Creating Kibana image
 
     Dockerfile
         ...
@@ -71,6 +75,8 @@ Note:
         COPY kibana.yml.tmpl /opt/kibana-$KIBANA_VERSION/config/
         COPY docker-starter /usr/local/bin/ 
         CMD ["docker-starter", "-cmd", "/opt/kibana-{{E .KIBANA_VERSION}}/bin/kibana", "-dir", "/opt/kibana-{{E .KIBANA_VERSION}}/config"]
+
+(See [docker-kibana](https://github.com/olafstauffer/docker-kibana) for the complete example.)
 
 
 ## Internals
@@ -88,12 +94,12 @@ The go templating engine is used. (For more info on the engine see see: http://g
 
 Additionally there are two template pipeline functions to make it easy to work with the internal data structure (the map of string slices).
 
-##### E  
+##### E .variable
 Returns the first value element for a key (or "" if the key does not exist)  
 Example: {{E .FOO}} gives "BAR" if value is set to ["BAR", "IT", "IS"]
 
-##### J [sep]  
-Returns a the value elements joined by the separator (default to ',')  
+##### J .variable [sep]
+Returns the value elements joined by the separator (default to ',')  
 Example: {{J .FOO "#"}} gives "BAR#IT#IS" if value is set to ["BAR", "IT", "IS"] 
 
 #### Link Variables
@@ -142,4 +148,8 @@ The variable _ELASTICSEARCH_9200_URL_ contains the list: "http://172.17.0.32:920
 After running the command the main execution is blocked and waits for the command to exit. Every signal is forwared to the command.
 
 Note: After sending a KILL Signal (-9) the running command must be manually destroyed, because a KILL cannot be forwarded.
+
+## Similar Tools
+
+ * [dockerize](https://github.com/jwilder/dockerize) - easier to use, focused on single application, better documentation 
 
